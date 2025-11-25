@@ -1,12 +1,35 @@
+// Лабораторна робота №4: Створення найпростішого HTTP-сервера на Node.js
+// Варіант 5: mtcars.json
+//
+// Параметри URL:
+//   ?cylinders=true     – показувати кількість циліндрів (cyl) у результаті
+//   ?max_mpg=X          – показувати лише авто з mpg < X
+//
+// Формат XML (приклад з методички):
+// <cars>
+//   <car>
+//     <model>Mazda RX4</model>
+//     <cyl>6</cyl>
+//     <mpg>21</mpg>
+//   </car>
+//   ...
+// </cars>
+
 const http = require("http");
 const path = require("path");
 const fs = require("fs");
 const { Command } = require("commander");
 const { XMLBuilder } = require("fast-xml-parser");
 
+// ------------------------------
+// 1. Параметри командного рядка
+// ------------------------------
+
 const program = new Command();
 
 program
+    .name("backend-course-2025-4")
+    .description("Lab 4 HTTP server (variant 5 - mtcars)")
     .requiredOption("-i, --input <path>", "path to input JSON file")
     .requiredOption("-h, --host <host>", "server host")
     .requiredOption("-p, --port <port>", "server port");
@@ -18,71 +41,140 @@ const INPUT = path.resolve(opts.input);
 const HOST = opts.host;
 const PORT = Number(opts.port);
 
-fs.access(INPUT, fs.constants.R_OK, (err) => {
-    if (err) {
+// файл, куди будемо зберігати останню XML-відповідь (щоб використати writeFile)
+const OUTPUT_XML = path.resolve("last-response.xml");
+
+// --------------------------------------
+// 2. Перевірка наявності вхідного файлу
+// --------------------------------------
+
+fs.promises
+    .access(INPUT, fs.constants.R_OK)
+    .catch(() => {
+        // текст помилки строго як у завданні
         console.error("Cannot find input file");
         process.exit(1);
-    } else {
+    })
+    .then(() => {
         startServer();
-    }
-});
+    });
 
+// --------------------------------------
+// 3. Допоміжні функції: читання та фільтр
+// --------------------------------------
+
+/**
+ * Асинхронно читає mtcars.json.
+ * У файлі кожен рядок – окремий JSON-об’єкт.
+ */
 async function loadCars() {
     const raw = await fs.promises.readFile(INPUT, "utf-8");
-    const lines = raw.split(/\r?\n/).filter(line => line.trim());
-    return lines.map(line => JSON.parse(line));
+    const lines = raw.split(/\r?\n/).filter((line) => line.trim().length > 0);
+    return lines.map((line) => JSON.parse(line));
 }
 
+/**
+ * Фільтрує авто за max_mpg:
+ *  - якщо maxMpg = NaN → повертаємо всі авто (без фільтра)
+ *  - інакше → лишаємо лише ті, в яких mpg < maxMpg
+ */
 function filterCars(cars, maxMpg) {
-    let result = cars;
-
-    if (!isNaN(maxMpg)) {
-        result = result.filter(car => typeof car.mpg === "number" && car.mpg < maxMpg);
+    if (Number.isNaN(maxMpg)) {
+        return cars;
     }
 
-    return result;
+    return cars.filter(
+        (car) => typeof car.mpg === "number" && car.mpg < maxMpg
+    );
 }
 
-const xmlBuilder = new XMLBuilder({ format: true });
+// --------------------------------------
+// 4. Підготовка XML-білдера
+// --------------------------------------
 
-function buildXml(cars, showCylinders) {
-    const xmlCars = cars.map(car => {
-        const obj = {
+const xmlBuilder = new XMLBuilder({
+    ignoreAttributes: false,
+    format: true, // красиве форматування
+});
+
+/**
+ * Формує структуру XML відповідно до варіанта 5:
+ *   <cars>
+ *     <car>
+ *       <model>...</model>
+ *       <cyl>...</cyl>    // якщо cylinders=true
+ *       <mpg>...</mpg>
+ *     </car>
+ *   </cars>
+ */
+function buildCarsXml(cars, showCylinders) {
+    const carNodes = cars.map((car) => {
+        const node = {
             model: car.model,
             mpg: car.mpg,
         };
 
-        if (showCylinders) obj.cyl = car.cyl;
+        if (showCylinders) {
+            node.cyl = car.cyl;
+        }
 
-        return obj;
+        return node;
     });
 
-    return xmlBuilder.build({
-        cars: { car: xmlCars }
-    });
+    const xmlObj = {
+        cars: {
+            car: carNodes,
+        },
+    };
+
+    return xmlBuilder.build(xmlObj);
 }
+
+// --------------------------------------
+// 5. HTTP-сервер: обробка запитів
+// --------------------------------------
 
 function startServer() {
     const server = http.createServer(async (req, res) => {
         const url = new URL(req.url, `http://${HOST}:${PORT}`);
 
+        // ?cylinders=true
         const showCylinders = url.searchParams.get("cylinders") === "true";
-        const maxMpg = url.searchParams.get("max_mpg");
+
+        // ?max_mpg=X
+        const maxMpgParam = url.searchParams.get("max_mpg");
+        const maxMpg =
+            maxMpgParam !== null && maxMpgParam !== ""
+                ? Number(maxMpgParam)
+                : NaN;
 
         try {
+            // 1. Читаємо JSON з файлу (асинхронно)
             const cars = await loadCars();
-            const filtered = filterCars(cars, Number(maxMpg));
-            const xml = buildXml(filtered, showCylinders);
 
-            res.writeHead(200, { "Content-Type": "application/xml" });
+            // 2. Фільтруємо за mpg (якщо max_mpg заданий)
+            const filteredCars = filterCars(cars, maxMpg);
+
+            // 3. Формуємо XML
+            const xml = buildCarsXml(filteredCars, showCylinders);
+
+            // 4. Додатково зберігаємо XML у файл (writeFile згідно з вимогами)
+            await fs.promises.writeFile(OUTPUT_XML, xml, "utf-8");
+
+            // 5. Надсилаємо XML-клієнту
+            res.statusCode = 200;
+            res.setHeader("Content-Type", "application/xml; charset=utf-8");
             res.end(xml);
-        } catch (e) {
-            res.writeHead(500, { "Content-Type": "text/plain" });
+        } catch (err) {
+            console.error("Server error:", err);
+
+            res.statusCode = 500;
+            res.setHeader("Content-Type", "text/plain; charset=utf-8");
             res.end("Internal Server Error");
         }
     });
 
     server.listen(PORT, HOST, () => {
-        console.log(`Server running at http://${HOST}:${PORT}`);
+        console.log(`Server is listening on http://${HOST}:${PORT}`);
     });
 }
