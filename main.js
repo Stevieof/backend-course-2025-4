@@ -1,20 +1,3 @@
-// Лабораторна робота №4: Створення найпростішого HTTP-сервера на Node.js
-// Варіант 5: mtcars.json
-//
-// Параметри URL:
-//   ?cylinders=true     – показувати кількість циліндрів (cyl) у результаті
-//   ?max_mpg=X          – показувати лише авто з mpg < X
-//
-// Формат XML (приклад з методички):
-// <cars>
-//   <car>
-//     <model>Mazda RX4</model>
-//     <cyl>6</cyl>
-//     <mpg>21</mpg>
-//   </car>
-//   ...
-// </cars>
-
 const http = require("http");
 const path = require("path");
 const fs = require("fs");
